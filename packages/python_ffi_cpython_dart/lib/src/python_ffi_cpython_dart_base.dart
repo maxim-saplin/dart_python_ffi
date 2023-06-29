@@ -322,12 +322,55 @@ base mixin PythonFfiCPythonMixin on PythonFfiCPythonBase {
     if (Platform.isMacOS) {
       return _initializeRuntimeCustom();
     } else {
-      _initializeRuntimeDefault();
+      return _initializeRuntimeDefault();
     }
   }
 
-  void _initializeRuntimeDefault() {
-    bindings.Py_Initialize();
+  Future<void> _initializeRuntimeDefault() async {
+    //bindings.Py_Initialize();
+    final Pointer<PyPreConfig> preConfig = malloc<PyPreConfig>();
+    bindings.PyPreConfig_InitIsolatedConfig(preConfig);
+
+    preConfig.ref.utf8_mode = 1;
+    preConfig.ref.configure_locale = 1;
+    preConfig.ref.coerce_c_locale = 2;
+
+    bindings.Py_PreInitialize(preConfig);
+
+    final String pythonFfiPath = (await pythonFfiDir).path;
+    final Pointer<PyConfig> config = malloc<PyConfig>();
+
+    void clearConfig() {
+      bindings.PyConfig_Clear(config);
+      malloc.free(config);
+    }
+
+    bindings.PyConfig_InitIsolatedConfig(config);
+
+    _injectPyWChar(
+      "utf-8",
+      (Pointer<WChar> wchar) => _pyStatusGuarded(
+        () => _updateWCharPointer(
+          callback: (Pointer<Pointer<WChar>> wcharPointer) =>
+              bindings.PyConfig_SetString(config, wcharPointer, wchar),
+          updateCallback: (Pointer<WChar> wchar) =>
+              config.ref.filesystem_encoding = wchar,
+        ),
+        onError: clearConfig,
+      ),
+    );
+
+    _injectPyWChar(
+      pythonFfiPath,
+      (Pointer<WChar> wchar) => _updateWCharPointer(
+          callback: (Pointer<Pointer<WChar>> wcharPointer) =>
+              bindings.PyConfig_SetString(config, wcharPointer, wchar),
+          updateCallback: (Pointer<WChar> wchar) => config.ref.home = wchar,
+        ),
+    );
+
+    bindings.Py_InitializeFromConfig(config);
+    bindings.PyConfig_Clear(config);
   }
 
   Future<void> _initializeRuntimeCustom() async {
